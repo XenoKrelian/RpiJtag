@@ -1,0 +1,35 @@
+---------------
+0. Introduction
+---------------
+
+Hello and thank you for downloading my Raspberry Pi JTAG programmer software!
+
+V 0.1
+First functional build: Can program XC3S200 FPGA.
+
+V 0.2
+Improved code, made functions to handle data,FPGA commands and JTAG state
+
+----------
+1. License
+----------
+
+Raspberry Pi Jtag is free software and it is released under the GNU GPLv3 license.
+
+---------------------------------
+2. Hardware interface, usage, etc
+---------------------------------
+
+Use Raspberry Pi GPIO pins (7,8,9,4), JTAG protocol to communicate with FPGA's
+
+WARNING!
+IF JTAG VOLTAGE IS HIGHER OR LOWER THAN 3.3V, YOU WILL NEED A CURRENT LIMITING CIRCUIT!
+
+---------
+3. Author
+---------
+
+Rune 'Krelian' Jørgensen
+
+
+
