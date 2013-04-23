@@ -1,6 +1,6 @@
 /*
  * Raspberry Pi JTAG Programmer using GPIO connector
- * Version 0.2 Copyright 2013 Rune 'Krelian' Joergensen
+ * Version 0.3 Copyright 2013 Rune 'Krelian' Joergensen
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,30 @@
 #include <unistd.h>
 #include "rpjtag.h" //Defines
 
-void UpdateState(int j_state)
+/*
+#define JTAG_AUTO			0x000 // 0000 0000 0000 //0
+#define JTAG_RESET			0x001 // 0000 0000 0001 //1
+#define JTAG_IDLE			0x002 // 0000 0000 0010 //2
+
+#define JTAG_DR_SCAN		0x003 // 0000 0000 0011 //3
+#define JTAG_DR_CAPTURE		0x011 // 0000 0001 0001 //17
+#define JTAG_DR_SHIFT		0x012 // 0000 0001 0010 //18
+#define JTAG_DR_EXIT1		0x013 // 0000 0001 0011 //19
+#define JTAG_DR_PAUSE		0x014 // 0000 0001 0100 //20
+#define JTAG_DR_EXIT2		0x015 // 0000 0001 0101 //21
+#define JTAG_DR_UPDATE		0x016 // 0000 0001 0110 //22
+
+#define JTAG_IR_SCAN		0x004 // 0000 0000 0100 //4
+#define JTAG_IR_CAPTURE		0x101 // 0001 0000 0001 //257
+#define JTAG_IR_SHIFT		0x102 // 0001 0000 0010 //258
+#define JTAG_IR_EXIT1		0x103 // 0001 0000 0011 //259
+#define JTAG_IR_PAUSE		0x104 // 0001 0000 0100 //260
+#define JTAG_IR_EXIT2		0x105 // 0001 0000 0101 //261
+#define JTAG_IR_UPDATE		0x106 // 0001 0000 0110 //262
+*/
+
+//Entire file needs a rewrite, maybe routing table, for easy of transition in TAP controller
+void UpdateState(int j_state, int iTMS)
 {
 	switch(j_state)
 	{
@@ -56,14 +79,7 @@ void UpdateState(int j_state)
 			else if((jtag_state | 0x116) == 0x116) //if we are in UPDATE-IR/
 				jtag_state = JTAG_DR_SCAN;
 			break;
-		case JTAG_DR_SCAN: //Goto DR-SCAN
-			break;
-		case JTAG_IR_SCAN: //Goto IR-SCAN
-			break;
-		default:
-			break;
 	}
-	//fprintf(stderr,"JTAG_STATE: %03X\n", jtag_state);
 }
 
 void syncJTAGs()
@@ -88,7 +104,7 @@ void syncJTAGs()
 //Can only be used after sync
 void SelectShiftDR()
 {
-	UpdateState(JTAG_DR_SHIFT);
+	jtag_state = JTAG_DR_SHIFT;
 	send_cmd(0,0);
 	send_cmd(0,0);
 }
@@ -96,14 +112,16 @@ void SelectShiftDR()
 //Can only be used after sync
 void SelectShiftIR()
 {
+	jtag_state = JTAG_IR_SHIFT;
 	send_cmd(0,1);
 	send_cmd(0,0);
 	send_cmd(0,0);
 }
 
-//Can only be used after sync
+//Can only be used after sync, leaves TAP controller in JTAG_DR_SCAN
 void ExitShift()
 {
+	jtag_state = JTAG_DR_SCAN;
 	send_cmd(0,1);
 	send_cmd(0,1);
 	send_cmd(0,1);

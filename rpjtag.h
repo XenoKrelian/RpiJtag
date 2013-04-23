@@ -1,10 +1,6 @@
 //Header file for rpjtag.c
 //Credit for GPIO setup goes to http://elinux.org/RPi_Low-level_peripherals
 
-//My Devices in dev/test circuit
-#define PROM_XCF01S	0xf5044093
-#define FPGA_XC3S200_FT256	0x01414093
-
 #define BCM2708_PERI_BASE        0x20000000
 #define GPIO_BASE                (BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
 
@@ -66,7 +62,7 @@ volatile unsigned *gpio;
 
 #define XILINX_BITFILE 1
 
-int n, x, i, temp, IRTotalRegSize, jtag_state, nDevices, parms, bitFileId;
+int n, x, i, temp, IRTotalRegSize, jtag_state, nDevices, parms, bitFileId, fileCounter,deviceDataNr, deviceChainNr;
 
 struct IDCODE_DATA
 {
@@ -78,34 +74,22 @@ struct IDCODE_DATA
 } idcode[32]; //32 Devices
 
 /*
-Devices:
- IDCODE  Manuf     Device name                               len hir tir hdr tdr
-0141C093 Xilinx    XC3S400                                    6   8   0   1   0
-F5045093 Xilinx    XCF02S                                     8   0   6   0   1
-
-BSR chain is: pre(0/0) XCF02S(8/25) mid(0/0) XC3S400(6/815) end(0/0) => 14/840
-Copied 815 cells from XC3S400 to safe bits to postion 25
-Copied 25 cells from XCF02S to safe bits to postion 0
-di  : rd=686 wr=685 con=684 dis=1
-do  : rd=650 wr=649 con=648 dis=1
-sclk: rd=689 wr=688 con=687 dis=1
-sel : rd=641 wr=640 con=639 dis=1
-wp  : rd=683 wr=682 con=681 dis=1
-hold: rd=692 wr=691 con=690 dis=1
-Copied 815 cells from XC3S400 to safe bits to postion 25
-Copied 25 cells from XCF02S to safe bits to postion 0
+Devices known:
+ IDCODE  Manuf     Device name
+01414093 Xilinx    XC3S200
+0141C093 Xilinx    XC3S400
+F5044093 Xilinx    XCF01S
+F5045093 Xilinx    XCF02S
 */
 
 struct Device
 {
-	struct Device *nextDevice; //Pointer to next Device
 	char* DeviceName; //Device name
 	int idcode:32; //Device Id Code
-	int tIRLen; //Total IR Lenght
-	int tDRLen; //Total DR Lenght
-	int dIRLen; //Device IR Lenght
-	int dDRLen; //Device DR Lenght
-};
+	int dIRLen; //Device IR Length
+	int dBSRLen; //Device Boundary Scan Length, currently on v0.3 not used
+	FILE* filePtr; //Pointer to our BDSL, in case we need it
+} device_data[32]; //32 Devices
 
 struct bitFileInfo
 {
@@ -113,30 +97,18 @@ struct bitFileInfo
 	char* DesignName;
 	char* DeviceName;
 	int Bitstream_Length;
-};
-
-struct bitFileInfo bitfileinfo;
-
-/*
-struct Device {
-	struct Device *next;
-
-	unsigned int id; //long
-	int hir, tir, hdr, tdr, len;
-	int bsrlen, bsrsample, bsrsafe;
-	int user;
-
-	char *manuf, *name;
-};
-*/
+} bitfileinfo;
+//struct bitFileInfo bitfileinfo;
 
 void ProgramDevice(int deviceNr, FILE *f);
 void send_byte(unsigned char byte, int lastByte);
+void read_bdsl_file(char *filename, int fileNr);
+void load_bdsl_files(char *bdslfiles);
 FILE* load_bit_file(char *ifile);
-void CreateDevice(struct IDCODE_DATA newDevice);
+void CreateDeviceTable();
 int GetSegmentLength(int segment, int segmentCheck, FILE *f);
 void parse_header();
-void UpdateState(int j_state);
+void UpdateState(int j_state, int iTMS);
 void nop_sleep(long x);
 int read_jtag_tdo();
 int send_cmd(int iTDI,int iTMS);

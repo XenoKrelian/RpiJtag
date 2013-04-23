@@ -1,6 +1,6 @@
 /*
  * Raspberry Pi JTAG Programmer using GPIO connector
- * Version 0.2 Copyright 2013 Rune 'Krelian' Joergensen
+ * Version 0.3 Copyright 2013 Rune 'Krelian' Joergensen
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,10 +34,10 @@ FILE* load_bit_file(char *ifile)
 	temp = fopen(ifile, "r");
 	if(!temp)
 	{
-		fprintf(stderr, "rpjtag: could not open bitstream file %s for read, aborting.\n", ifile); 
+		fprintf(stderr, "RpiJtag: could not open bitstream file %s for read, aborting.\n", ifile); 
 		exit(1);
 	}else{
-		fprintf(stderr, "rpjtag: bitstream file %s has been read, continuing.\n", ifile); 
+		fprintf(stderr, "RpiJtag: bitstream file %s has been read, continuing.\n", ifile); 
 	}
 	parse_header(temp);
 	return temp;
@@ -45,16 +45,14 @@ FILE* load_bit_file(char *ifile)
 
 void checkStatusReg()
 {
-	//Xilinx CFG_IN Command words
+	//Xilinx CFG_IN Command words, should be loaded via bitFileId
 	unsigned int DYMMYWORD = 0xFFFFFFFF;
 	unsigned int NOOP = 0x20000000;
 	unsigned int SYNCWORD = 0xAA995566;
 	unsigned int STATUS_REG = 0x2800E002;
 	
 	syncJTAGs();
-	send_cmd(0,1); //SELECT IR
-	send_cmd(0,0);
-	send_cmd(0,0);
+	SelectShiftIR();
 
 	//CFG_IN
 	send_cmdWord_msb_last(0x3FC5,1,14); //11111111 000101
@@ -92,10 +90,10 @@ void checkStatusReg()
 	}
 	fprintf(stderr,"\n");
 
-	UpdateState(JTAG_RESET);
-	for(n=0;n<5;n++) send_cmd(0,1);
+	UpdateState(JTAG_RESET,0);
 }
 
+//remember last device is always the one to send IR bits to first
 void ProgramDevice(int deviceNr, FILE *f)
 {
 	unsigned char tempChar;
@@ -103,16 +101,36 @@ void ProgramDevice(int deviceNr, FILE *f)
 	if((parms & 0x01) == 0x01)
 		checkUserId(0);
 
-	checkStatusReg();
+	if((parms & 0x01) == 0x01) checkStatusReg();
 
 	syncJTAGs();
-	//UpdateState(JTAG_IR_SHIFT);
-	send_cmd(0,1); // -> SELECT IR SCAN
-	send_cmd(0,0);
-	send_cmd(0,0);
+	SelectShiftIR();
 
 	//CFG_IN
-	send_cmdWord_msb_last(0x3FC5,1,14); //11111111 000100
+	/*
+	send_cmdWord_msb_last(0x3FC5,1,14); //11111111 000101
+	OR
+	send_cmdWord_msb_last(0x05,0,6); //000101
+	send_cmdWord_msb_last(0xFF,1,8); //11111111
+	*/
+	for(x=nDevices;x>0;x--)
+	{
+		if((nDevices-deviceNr)==x)
+		{
+			if((parms & 0x01) == 0x01) fprintf(stderr,"\nDebug %d 0x05: %d, %s",x,device_data[deviceNr].dIRLen,device_data[deviceNr].DeviceName);
+			if((x-1)==0) //To check is MSB in chain is sent with this cmd
+				send_cmdWord_msb_last(0x05,1,device_data[deviceNr].dIRLen);
+			else
+				send_cmdWord_msb_last(0x05,0,device_data[deviceNr].dIRLen);
+		}else{	
+			if((parms & 0x01) == 0x01) fprintf(stderr,"\nDebug %d 0xFF: %d, %s",x,device_data[x].dIRLen,device_data[x].DeviceName);
+			if((x-1)==0) //To check is MSB in chain is sent with this cmd
+				send_cmdWord_msb_last(0xFFFFF,1,device_data[x].dIRLen);//Bypass max, 20bit register
+			else
+				send_cmdWord_msb_last(0xFFFFF,0,device_data[x].dIRLen);//Bypass max, 20bit register
+		}
+	}
+
 	//FPGA in CFG_IN MODE and PROM in BYPASS
 
 	send_cmd(0,1); //->UPDATE IR
@@ -120,10 +138,12 @@ void ProgramDevice(int deviceNr, FILE *f)
 	send_cmd(0,0);
 	send_cmd(0,0);
 
-	for(n=0;n<31;n++) send_cmd(0,0); //31 Leading Zero's
+	//Send leading zero's
+	if((nDevices-deviceChainNr-1)>0)
+		for(n=0;n<(32 - ((nDevices-deviceChainNr-1)%32));n++) send_cmd(0,0);
 
 	int n,bitcount = 0;
-	fprintf(stderr, "\nProgramming ... (%d) ",bitfileinfo.Bitstream_Length);
+	fprintf(stderr, "\nProgramming device %d/%d, Name: %s ... bitstream length (%d) ",(nDevices-deviceNr),nDevices,device_data[deviceNr].DeviceName,bitfileinfo.Bitstream_Length);
 	for(n = 0; n < bitfileinfo.Bitstream_Length; n++)
 	{
 		tempChar = fgetc(f);
@@ -145,13 +165,31 @@ void ProgramDevice(int deviceNr, FILE *f)
 	send_cmd(0,0);
 
 	//JSTART
-	send_cmdWord_msb_last(0x3FCC,1,14); //11111111 000100
-	//FPGA in CFG_IN MODE and PROM in BYPASS
+	//send_cmdWord_msb_last(0x3FCC,1,14); //11111111 001100
+	for(x=nDevices;x>0;x--)
+	{
+		if((nDevices-deviceNr)==x)
+		{
+			if((parms & 0x01) == 0x01) fprintf(stderr,"\nDebug %d 0x0C: %d, %s",x,device_data[deviceNr].dIRLen,device_data[deviceNr].DeviceName);
+			if((x-1)==0) //To check is MSB in chain is sent with this cmd
+				send_cmdWord_msb_last(0x0C,1,device_data[deviceNr].dIRLen);
+			else
+				send_cmdWord_msb_last(0x0C,0,device_data[deviceNr].dIRLen);
+		}else{	
+			if((parms & 0x01) == 0x01) fprintf(stderr,"\nDebug %d 0xFF: %d, %s",x,device_data[x].dIRLen,device_data[x].DeviceName);
+			if((x-1)==0) //To check is MSB in chain is sent with this cmd
+				send_cmdWord_msb_last(0xFFFFF,1,device_data[x].dIRLen);//Bypass max, 20bit register
+			else
+				send_cmdWord_msb_last(0xFFFFF,0,device_data[x].dIRLen);//Bypass max, 20bit register
+		}
+	}
+
+	//FPGA in JSTART MODE and PROM in BYPASS
 
 	send_cmd(0,1); //->UPDATE IR
 	for(n=0;n<16;n++) send_cmd(0,0); //Go to Run-Test, and idle for 12+ clocks to start
 
-	checkStatusReg();
+	if((parms & 0x01) == 0x01) checkStatusReg();
 
 	if((parms & 0x01) == 0x01)
 	{
@@ -164,25 +202,10 @@ void ProgramDevice(int deviceNr, FILE *f)
 void checkUserId(int x)
 {
 	syncJTAGs();
-	send_cmd(0,1); //SELECT IR
-	send_cmd(0,0);
-	send_cmd(0,0);
+	SelectShiftIR();
 
-	send_cmd(0,0); //LSB in FPGA
-	send_cmd(0,0);
-	send_cmd(0,0);
-	send_cmd(1,0);
-	send_cmd(0,0);
-	send_cmd(0,0); //MSB in FPGA
+	send_cmdWord_msb_last(0x3FC8,1,14); //11111111 001000
 
-	send_cmd(1,0); //LSB in PROM
-	send_cmd(1,0);
-	send_cmd(1,0);
-	send_cmd(1,0);
-	send_cmd(1,0);
-	send_cmd(1,0);
-	send_cmd(1,0);
-	send_cmd(1,1); //MSB in PROM -> EXIT IR
 	send_cmd(0,1);
 	send_cmd(0,1);
 	send_cmd(0,0);
@@ -197,11 +220,6 @@ void checkUserId(int x)
 	send_cmd(0,1);
 	send_cmd(0,0);
 	send_cmd(0,0); //Run-Test/Idle
-}
-
-void CreateDevice(struct IDCODE_DATA newDevice)
-{
-
 }
 
 int GetSegmentLength(int segment, int segmentCheck, FILE *f)
@@ -230,6 +248,7 @@ void parse_header(FILE *f)
 	int segmentCheck = 0x61; //Start at a char(97)
 	int segment = 0;
 	int	segmentLength = 0;
+	int offset = 0;
 	unsigned char tempChar;
 
 	//First 13 bits, so far all Xilinx Bitstream files, start with XilinxID13 bytes
@@ -261,10 +280,20 @@ void parse_header(FILE *f)
 	segmentLength = GetSegmentLength(segment,segmentCheck,f);
 	segmentCheck++;
 	fprintf(stderr, "Device: ");
-	bitfileinfo.DeviceName = (char*)malloc(sizeof(char)*segmentLength);
+	if(bitFileId==XILINX_BITFILE)
+	{
+			bitfileinfo.DeviceName = (char*)malloc(sizeof(char)*(segmentLength+2));
+			bitfileinfo.DeviceName[0] = 'x'; //Xilinx XC not stored in bit file
+			bitfileinfo.DeviceName[1] = 'c';
+			offset=2;
+
+	}else{
+		bitfileinfo.DeviceName = (char*)malloc(sizeof(char)*segmentLength);
+		offset=0;
+	}
 	for(x = 0; x < segmentLength; x++)
 	{
-		bitfileinfo.DeviceName[x] = fgetc(f);
+		bitfileinfo.DeviceName[x+offset] = fgetc(f);
 	}
 	fprintf(stderr, "%s\n",bitfileinfo.DeviceName);
 //----------------------------------------------------------------------

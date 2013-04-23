@@ -1,6 +1,6 @@
 /*
  * Raspberry Pi JTAG Programmer using GPIO connector
- * Version 0.2 Copyright 2013 Rune 'Krelian' Joergensen
+ * Version 0.3 Copyright 2013 Rune 'Krelian' Joergensen
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -34,7 +35,7 @@ int CountDevices()
 	if((parms & 0x01) == 0x01)
 		fprintf(stderr,"Counting devices\n");
 
-	IRTotalRegSize = 0;
+	int tIRLen = 0;
 	syncJTAGs();
 	SelectShiftIR();
 
@@ -44,8 +45,11 @@ int CountDevices()
  	{
 		x = send_cmd(0,0);
 		if(!x) break;
-		IRTotalRegSize++;
+		tIRLen++;
 	}
+
+	if(tIRLen != IRTotalRegSize)
+		fprintf(stderr,"\nERROR IR SIZE FROM BSDL MISMATCH FROM JTAG\n");
 
 	for(x=0;x<MAX_CHAIN;x++) send_cmd(1,0); //PUT all in BYPASS
 	
@@ -57,16 +61,16 @@ int CountDevices()
 	if((parms & 0x01) == 0x01)
 		fprintf(stderr,"FLUSH DR\n");
 
-	for(x=0;x<IRTotalRegSize;x++) //put in 1's into DR, when TDO outputs a 1, end is reached
+	for(x=0;x<tIRLen;x++) //put in 1's into DR, when TDO outputs a 1, end is reached
 	{
 		i = send_cmd(1,0);
 		if(i) break;
 	}
 
-	if(x==IRTotalRegSize) x = 0; //if x reaches max most likely a error ocurred!
+	if(x==tIRLen) x = 0; //if x reaches max most likely a error ocurred!
 
 	if((parms & 0x01) == 0x01)
-		fprintf(stderr,"(IR REG SIZE:(0's) %d vs (1's) %d)\n",i,IRTotalRegSize);
+		fprintf(stderr,"(IR REG SIZE:(0's) %d vs (1's) %d)\n",i,tIRLen);
 
 	fprintf(stderr,"Devices found: %d\n",x);
 	ExitShift();
@@ -78,8 +82,10 @@ void help()
 {
 	fprintf(stderr,
 	"Usage: rpjtag [options]\n"
-	"       -h          print help\n"
+	"   -h      Print help\n"
 	"	-D	    Debug info\n"
+	"	-b		use BDSL file(s) use , as between multiple files\n"
+	"			only needed if program doesn't know IDCODE->BDSL file\n"
 	"\n");
 }
 
@@ -136,15 +142,16 @@ void setup_io()
 int main(int argc, char *argv[])
 {
 	char *ifile  = "demo.bit";
-	//char *ofile = "jtag.hex";
+	char *bdslfiles = "xc3s200ft256.bsd,xcf01s.bsd";
 	int opt;
 	nDevices = 0;
 	parms = 0;
+	IRTotalRegSize = 0;
 	jtag_state = 0x00;
+	
+	fprintf(stderr, "Raspberry Pi JTAG Programmer, v0.3 (April 2013)\n\n");
 
-	fprintf(stderr, "Raspberry Pi JTAG Programmer, v0.1 (April 2013)\n\n");
-
-	while ((opt = getopt(argc, argv, "hDi:")) != -1) {
+	while ((opt = getopt(argc, argv, "hDi:b:")) != -1) {
 		switch (opt) {
 		case 'h':
 			help();
@@ -155,6 +162,9 @@ int main(int argc, char *argv[])
 		case 'i':
 			ifile = optarg;
 			break;
+		case 'b':
+			bdslfiles = optarg;
+			break;
 		default:
 			fprintf(stderr, "\n");
 			help();
@@ -163,26 +173,53 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if(ifile == 0x00)
+		exit(0);
+
 	#ifdef DEBUG
 		parms |= 0x01;
 	#endif
 
+	load_bdsl_files(bdslfiles);
+
 	FILE* bitstream = load_bit_file(ifile);
+
+	//Check if bdsl file for bitfile device exists
+	for(i=0;i<fileCounter+1;i++)
+	{
+		if(0==memcmp(device_data[i].DeviceName,bitfileinfo.DeviceName,sizeof(bitfileinfo.DeviceName)))
+		{
+			deviceDataNr=i;
+			break;
+		}
+	}
+    //deviceDataNr now points at the BSDL Device data to use
+
+	if(i == fileCounter)
+	{ fprintf(stderr,"Bitfile information did not find match in BDSL files"); exit(1); }
 
 	// Set up gpi pointer for direct register access
 	setup_io();
 
+	//rpjtag_stateMachine.c
 	syncJTAGs(); //Puts all JTAG Devices in RESET MODE
+	
 	nDevices = CountDevices(); //Count Number of devices, also finds total IR size
-	readIDCODES(); //Reads the IDCODE's from Devices
+	//rpjtag_io.h
+	readIDCODES(); //Reads the IDCODE's from Devices also sets deviceChainNr if IDCODE matches
+
 	fprintf(stderr,"\n");
+	if((parms & 0x01) == 0x01)
+		fprintf(stderr,"nDevice: %d, deviceDataNr: %d, deviceChainNr: %d",nDevices,deviceDataNr,deviceChainNr);
+
 	if(nDevices != 0)
 	{
-		ProgramDevice(1,bitstream);
+		//rpjtag_bit_reader.c
+		ProgramDevice(deviceChainNr,bitstream); 
 	}
 	fclose(bitstream);
-	munmap(gpio_map,BLOCK_SIZE);
 
+	munmap(gpio_map,BLOCK_SIZE);
 	printf("\nDone\n");
 	exit(0);
 }

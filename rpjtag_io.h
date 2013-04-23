@@ -16,10 +16,11 @@ int send_cmd(int iTDI,int iTMS)
 	if(iTMS == 1)
 	{
 		GPIO_SET(JTAG_TMS);
-		UpdateState(JTAG_AUTO); //Auto adjust statemachine
 	}
 	else
 		GPIO_CLR(JTAG_TMS);
+
+	UpdateState(JTAG_AUTO,iTMS); //Auto adjust statemachine
 
 	nop_sleep(WAIT);
 	GPIO_SET(JTAG_TCK);
@@ -69,7 +70,6 @@ void nop_sleep(long x)
 
 void jtag_read_data(char* data,int iSize)
 {
-	//if(jtag_state != JTAG_DR_SHIFT)
 	if(iSize==0) return;
 	int bitOffset = 0;
 	memset(data,0,(iSize+7)/8);
@@ -78,23 +78,24 @@ void jtag_read_data(char* data,int iSize)
 	while(iSize--)
 	{
 		temp = send_cmd(0,0);
-		/*if((parms & 0x01) == 0x01)
-			fprintf(stderr,"\nCount: %d, TDO: %d",iSize+1,temp);*/
-
 		data[bitOffset/8] |= (temp << (bitOffset & 7));
 		bitOffset++;
 	}
 
 	temp = send_cmd(0,1); //Read last bit, while also going to EXIT
 	data[bitOffset/8] |= (temp << (bitOffset & 7));
-
-	if((parms & 0x01) == 0x01)
-		fprintf(stderr,"\nCount: %d, TDO: %d",iSize+1,temp);
-
 	send_cmd(0,1); //Go to UPDATE STATE
 	send_cmd(0,1); //Go to SELECT DR-SCAN
 }
 
+/*
+	This reads IDCODE from Devices in JTAG, when IDCODE is found that matches Bitfile+BDSL file, device position in JTAG chain is stored
+	Future fix:
+		Able to program all/specific device if more then 1 device of same type
+		example:
+		PROM->XC3S200->PROM->XC3S200
+		only the last one(XC3S200) will be found by the code below
+*/
 void readIDCODES()
 {
 	if(nDevices != 0 || ((parms & 0x01) == 0x01))
@@ -103,14 +104,25 @@ void readIDCODES()
 		send_cmd(0,0);
 		send_cmd(0,0);
 		jtag_read_data((char*)idcode,32*nDevices);
+		//Remember device are reserved order, first data out is from last device, hence it will be device 1, need to fix this somehow to avoid confustion
+		x = 0;
 		for(i=0;i<nDevices;i++)
 		{
-			if(idcode[i].onebit == 1 || idcode[i].onebit == -1)
+			if(idcode[i].onebit == 1 || idcode[i].onebit == -1) //bug with 1st bit in readout, should always be 1, but this gets -1, need help to fix
 			{
-				fprintf(stderr,"\nDevice %d(%d) IDCODE: %08X, (Manuf %03X, Part size %03X, Family code %02X), Rev %X",i+1,idcode[i].onebit,idcode[i],idcode[i].manuf,idcode[i].size,idcode[i].family,idcode[i].rev);
-				//CreateDevice(idcode[i]); //Checks IDCODE up against Bitfile supplied, and try to find bsd file in program root.
+				int iIdcode = (*(int*)&idcode[i]|0xF0000000);
+				if(iIdcode == device_data[deviceDataNr].idcode && x == 0)
+				{
+					x=1;
+					deviceChainNr = i;
+					fprintf(stderr,"\nDevice %d, %08X (Manuf %03X, Part size %03X, Family code %02X) bitfile+bdsl match: %d",i+1,iIdcode,idcode[i].manuf,idcode[i].size,idcode[i].family,x);
+				}else{
+					fprintf(stderr,"\nDevice %d, %08X (Manuf %03X, Part size %03X, Family code %02X) bitfile+bdsl match: %d",i+1,iIdcode,idcode[i].manuf,idcode[i].size,idcode[i].family,0);
+				}
 			}
 		}
+		if(x==0){fprintf(stderr,"ERROR NO DEVICE IDCODE MATCH BITFILE/BDSL FILE"); exit(1);}
+		
 	}else{
 		fprintf(stderr,"No devices found\n");
 	}
